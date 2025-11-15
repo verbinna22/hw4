@@ -1,5 +1,6 @@
 /* Lama SM Bytecode interpreter */
 
+#include <climits>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -936,11 +937,10 @@ static void verify () {
       throw std::logic_error("front jump outside the function detected");
     }
     auto first_param = const_cast<uint32_t *> (reinterpret_cast<const uint32_t *>(&file->code_ptr[begin_addr + 1]));
-    *first_param = (*first_param & 0x0000FFFF) | (static_cast<uint32_t>(current_stack_level) << sizeof(uint16_t));
+    *first_param = (*first_param & 0x0000FFFF) | (static_cast<uint32_t>(current_stack_level) << (sizeof(uint16_t) * CHAR_BIT));
   }
 }
 
-// TODO: 1st 2bytes fix
 // TODO: check + extra code remove
 
 static void run_interpreter () {
@@ -959,8 +959,8 @@ static void run_interpreter () {
     // print_stacks();
     if (expected_begin
         && (static_cast<HightSymbols>(h) != HightSymbols::SECOND_GROUP
-            || static_cast<SecondGroup>(l) != SecondGroup::BEGIN
-                   && static_cast<SecondGroup>(l) != SecondGroup::CBEGIN)) {
+            || (static_cast<SecondGroup>(l) != SecondGroup::BEGIN
+                   && static_cast<SecondGroup>(l) != SecondGroup::CBEGIN))) {
       throw std::logic_error("BEGIN or CBEGIN was expected");
     }
     switch (static_cast<HightSymbols>(h)) {
@@ -1139,6 +1139,8 @@ static void run_interpreter () {
 
           case SecondGroup::BEGIN: {   // BEGIN
             size_t nargs   = SAFE_INT;
+            size_t nstack_size = (nargs & 0xFFFF0000) >> (sizeof(uint16_t) * CHAR_BIT);
+            nargs &= 0x0000FFFF;
             size_t nlocals = SAFE_INT;
             if (!expected_begin) [[unlikely]] { throw std::logic_error("BEGIN was not expected"); }
             expected_begin = false;
@@ -1152,6 +1154,8 @@ static void run_interpreter () {
           case SecondGroup::CBEGIN: {   // CBEGIN
             size_t nargs   = SAFE_INT;
             size_t nlocals = SAFE_INT;
+            size_t nstack_size = (nargs & 0xFFFF0000) >> (sizeof(uint16_t) * CHAR_BIT);
+            nargs &= 0x0000FFFF;
             if (!expected_begin) [[unlikely]] { throw std::logic_error("CBEGIN was not expected"); }
             expected_begin = false;
             if (nargs != nargs_in_current_function) [[unlikely]] {
