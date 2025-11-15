@@ -677,9 +677,21 @@ static void verify () {
       case HightSymbols::LD: {
         size_t i = SAFE_INT;
         switch (static_cast<Locs>(l)) {
-          case Locs::GLOB: break;
-          case Locs::LOC: break;
-          case Locs::ARG: break;
+          case Locs::GLOB:
+            if (i >= nglobals) {
+              throw std::logic_error("bad access to global");
+            }
+            break;
+          case Locs::LOC:
+            if (i >= nlocals_in_current_function) {
+              throw std::logic_error("bad access to local");
+            }
+            break;
+          case Locs::ARG:
+            if (i >= nargs_in_current_function) {
+                throw std::logic_error("bad access to local");
+            }
+            break;
           case Locs::CLOS: break;
           default: throw std::logic_error("invalid loc");
         }
@@ -692,12 +704,21 @@ static void verify () {
         TRANSFORM_STACK(1, 1, 0);
         switch (static_cast<Locs>(l)) {
           case Locs::GLOB: {
+            if (i >= nglobals) {
+              throw std::logic_error("bad access to global");
+            }
             break;
           }
           case Locs::LOC: {
+            if (i >= nlocals_in_current_function) {
+              throw std::logic_error("bad access to local");
+            }
             break;
           }
           case Locs::ARG: {
+            if (i >= nargs_in_current_function) {
+                throw std::logic_error("bad access to local");
+            }
             break;
           }
           case Locs::CLOS: {
@@ -749,6 +770,8 @@ static void verify () {
             size_t nlocals = SAFE_INT;
             if (!expected_begin) [[unlikely]] { throw std::logic_error("BEGIN was not expected"); }
             expected_begin = false;
+            nlocals_in_current_function = nlocals;
+            nargs_in_current_function = nargs;
             break;
           }
 
@@ -757,6 +780,8 @@ static void verify () {
             size_t nlocals = SAFE_INT;
             if (!expected_begin) [[unlikely]] { throw std::logic_error("CBEGIN was not expected"); }
             expected_begin = false;
+            nlocals_in_current_function = nlocals;
+            nargs_in_current_function = nargs;
             break;
           }
 
@@ -772,12 +797,21 @@ static void verify () {
                 size_t j  = SAFE_INT;
                 switch (static_cast<Locs>(loc)) {
                   case Locs::GLOB: {
+                    if (j >= nglobals) {
+                      throw std::logic_error("bad access to global");
+                    }
                     break;
                   }
                   case Locs::LOC: {
+                    if (j >= nlocals_in_current_function) {
+                      throw std::logic_error("bad access to local");
+                    }
                     break;
                   }
                   case Locs::ARG: {
+                    if (j >= nargs_in_current_function) {
+                      throw std::logic_error("bad access to arg");
+                    }
                     break;
                   }
                   case Locs::CLOS: {
@@ -906,7 +940,6 @@ static void verify () {
   }
 }
 
-// TODO: locals, globals, args
 // TODO: 1st 2bytes fix
 // TODO: check + extra code remove
 
@@ -918,6 +951,7 @@ static void run_interpreter () {
   __gc_stack_top    = reinterpret_cast<size_t>(OPERAND_STACK_BEGIN_INCL);
   move_globals(file->global_area_size);
   main_begin();
+  nargs_in_current_function = 2;
   do {
     // print_code(ip);
     char x = SAFE_BYTE, h = uint8_t(x & 0xF0) >> 4, l = x & 0x0F;
