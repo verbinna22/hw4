@@ -547,6 +547,7 @@ static void verify () {
   std::vector<size_t> addresses_to_process = { main_addr };
   std::unordered_set<size_t> processed_addressed;
   std::vector<uint16_t> stack_levels_before(code_size, -1);
+  nglobals = file->global_area_size;
   while (!addresses_to_process.empty()) {
     size_t begin_addr = addresses_to_process.back();
     addresses_to_process.pop_back();
@@ -558,7 +559,7 @@ static void verify () {
     uint16_t max_stack_level_in_func = 0;
     uint16_t current_stack_level = 0;
     do {
-      // print_code(ip);
+      print_code(ip); ////
       size_t current_addr = ip - file->code_ptr;
     char x = SAFE_BYTE, h = uint8_t(x & 0xF0) >> 4, l = x & 0x0F;
     //dump_heap();
