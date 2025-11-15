@@ -394,17 +394,21 @@ static inline void move_globals (size_t number_of_globals) {
 }
 
 static inline aint *get_global (size_t i) {
-  if (i >= nglobals) [[unlikely]] { throw std::logic_error("invalid index of global"); }
+  // if (i >= nglobals) [[unlikely]] { throw std::logic_error("invalid index of global"); }
   return (GLOBALS_BEGIN + i);   // file->global_ptr + i;
 }
 
 static inline aint pop_operand () {
-  if (reinterpret_cast<aint *>(operand_stack_end) == OPERAND_STACK_BEGIN_INCL) [[unlikely]] {
-    throw std::logic_error("op stack underflow");
-  }
+  // if (reinterpret_cast<aint *>(operand_stack_end) == OPERAND_STACK_BEGIN_INCL) [[unlikely]] {
+  //   throw std::logic_error("op stack underflow");
+  // }
   operand_stack_end += sizeof(aint);
   aint result = *reinterpret_cast<aint *>(operand_stack_end);
   return result;
+}
+
+static inline void pop_noperands(size_t n) {
+  operand_stack_end += (n * sizeof(aint));
 }
 
 static inline void check_has_operands_on_stack (size_t n) {
@@ -424,11 +428,17 @@ static inline void stack_reorder(size_t n) {
 }
 
 static inline void push_operand (aint operand) {
-  if (reinterpret_cast<aint *>(operand_stack_end) < OPERAND_STACK_END_INCL) [[unlikely]] {
-    throw std::logic_error("op stack overflow");
-  }
+  // if (reinterpret_cast<aint *>(operand_stack_end) < OPERAND_STACK_END_INCL) [[unlikely]] {
+  //   throw std::logic_error("op stack overflow");
+  // }
   *reinterpret_cast<aint *>(operand_stack_end) = operand;
   operand_stack_end -= sizeof(aint);
+}
+
+static inline void check_stack_overflow(size_t stack_size) {
+  if ((reinterpret_cast<aint *>(operand_stack_end) + 1 - stack_size) < OPERAND_STACK_END_INCL) [[unlikely]] {
+    throw std::logic_error("op stack overflow");
+  }
 }
 
 static inline void main_begin () {
@@ -459,9 +469,9 @@ static inline void alloc_locals (size_t nlocals) {
 }
 
 static inline aint *get_local (size_t i) {
-  if (i >= nlocals_in_current_function) [[unlikely]] {
-    throw std::logic_error("invalid index of local");
-  }
+  // if (i >= nlocals_in_current_function) [[unlikely]] {
+  //   throw std::logic_error("invalid index of local");
+  // }
   return reinterpret_cast<aint *>(sp - (i + 1) * sizeof(aint));
 }
 
@@ -486,9 +496,9 @@ static void print_stacks () {
 #endif
 
 static inline aint *get_arg (size_t i) {
-  if (i >= nargs_in_current_function) [[unlikely]] {
-    throw std::logic_error("invalid index of arg");
-  }
+  // if (i >= nargs_in_current_function) [[unlikely]] {
+  //   throw std::logic_error("invalid index of arg");
+  // }
   return (reinterpret_cast<aint *>(sp) - nlocals_in_current_function - NUTIL_VALUES - i - 1);
 }
 
@@ -941,10 +951,7 @@ static void verify () {
   }
 }
 
-// TODO: check + extra code remove
-
 static void run_interpreter () {
-  bool        expected_begin = true;
   const char *ip             = main_addr + file->code_ptr;
   __gc_init();
   __gc_stack_bottom = reinterpret_cast<size_t>(CALL_STACK_BEGIN);
@@ -954,15 +961,9 @@ static void run_interpreter () {
   nargs_in_current_function = 2;
   do {
     // print_code(ip);
-    char x = SAFE_BYTE, h = uint8_t(x & 0xF0) >> 4, l = x & 0x0F;
+    char x = BYTE, h = uint8_t(x & 0xF0) >> 4, l = x & 0x0F;
     //dump_heap();
     // print_stacks();
-    if (expected_begin
-        && (static_cast<HightSymbols>(h) != HightSymbols::SECOND_GROUP
-            || (static_cast<SecondGroup>(l) != SecondGroup::BEGIN
-                   && static_cast<SecondGroup>(l) != SecondGroup::CBEGIN))) {
-      throw std::logic_error("BEGIN or CBEGIN was expected");
-    }
     switch (static_cast<HightSymbols>(h)) {
       /* BINOP  must be valid*/
       case HightSymbols::END: throw std::logic_error("end of bytecode was reached");
@@ -999,7 +1000,7 @@ static void run_interpreter () {
       case HightSymbols::FIRST_GROUP:
         switch (static_cast<FirstGroup>(l)) {
           case FirstGroup::CONST: {   // CONST
-            aint n = SAFE_INT;
+            aint n = INT;
             push_operand(make_boxed(n));
             break;
           }
@@ -1014,13 +1015,13 @@ static void run_interpreter () {
 
           case FirstGroup::SEXP: {   // SEXP
             aint          ptr = reinterpret_cast<aint>(STRING);
-            aint          n   = SAFE_INT;
-            check_has_operands_on_stack(n);
+            aint          n   = INT;
+            // check_has_operands_on_stack(n);
             push_operand(LtagHash(reinterpret_cast<char *>(ptr)));
             stack_reorder(n + 1);
             aint allocated_value = reinterpret_cast<aint>(
                 Bsexp(reinterpret_cast<aint *>(operand_stack_end) + 1, static_cast<aint>(make_boxed(n + 1))));
-            for (int i = 0; i < n + 1; ++i) { pop_operand(); }
+            pop_noperands(n + 1);
             push_operand(allocated_value);
             break;
           }
@@ -1037,7 +1038,7 @@ static void run_interpreter () {
           case FirstGroup::STI: throw std::logic_error("STI is temporary prohibited");
 
           case FirstGroup::JMP: {   // JMP
-            size_t addr = SAFE_INT;
+            size_t addr = INT;
             ip            = addr + file->code_ptr;
             break;
           }
@@ -1083,7 +1084,7 @@ static void run_interpreter () {
 
       case HightSymbols::LD: {   // LD
         aint variable;
-        size_t i = SAFE_INT;
+        size_t i = INT;
         switch (static_cast<Locs>(l)) {
           case Locs::GLOB: variable = *get_global(i); break;
           case Locs::LOC: variable = *get_local(i); break;
@@ -1096,7 +1097,7 @@ static void run_interpreter () {
       }
       case HightSymbols::LDA: throw std::logic_error("LDA is temporary prohibited");
       case HightSymbols::ST: {   // ST
-        size_t i     = SAFE_INT;
+        size_t i     = INT;
         aint value = pop_operand();
         push_operand(value);
         switch (static_cast<Locs>(l)) {
@@ -1124,26 +1125,25 @@ static void run_interpreter () {
       case HightSymbols::SECOND_GROUP:
         switch (static_cast<SecondGroup>(l)) {
           case SecondGroup::CJMPZ: {   // CJMPz
-            size_t addr  = SAFE_INT;
+            size_t addr  = INT;
             aint value = make_unboxed(pop_operand());
             if (value == 0) { ip = addr + file->code_ptr; }
             break;
           }
 
           case SecondGroup::CJMPNZ: {   // CJMPnz
-            size_t addr  = SAFE_INT;
+            size_t addr  = INT;
             aint value = make_unboxed(pop_operand());
             if (value != 0) { ip = addr + file->code_ptr; }
             break;
           }
 
           case SecondGroup::BEGIN: {   // BEGIN
-            size_t nargs   = SAFE_INT;
+            size_t nargs   = INT;
             size_t nstack_size = (nargs & 0xFFFF0000) >> (sizeof(uint16_t) * CHAR_BIT);
+            check_stack_overflow(nstack_size);
             nargs &= 0x0000FFFF;
-            size_t nlocals = SAFE_INT;
-            if (!expected_begin) [[unlikely]] { throw std::logic_error("BEGIN was not expected"); }
-            expected_begin = false;
+            size_t nlocals = INT;
             if (nargs != nargs_in_current_function) [[unlikely]] {
               throw std::logic_error("incorrect argument number");
             }
@@ -1152,12 +1152,11 @@ static void run_interpreter () {
           }
 
           case SecondGroup::CBEGIN: {   // CBEGIN
-            size_t nargs   = SAFE_INT;
-            size_t nlocals = SAFE_INT;
+            size_t nargs   = INT;
+            size_t nlocals = INT;
             size_t nstack_size = (nargs & 0xFFFF0000) >> (sizeof(uint16_t) * CHAR_BIT);
+            check_stack_overflow(nstack_size);
             nargs &= 0x0000FFFF;
-            if (!expected_begin) [[unlikely]] { throw std::logic_error("CBEGIN was not expected"); }
-            expected_begin = false;
             if (nargs != nargs_in_current_function) [[unlikely]] {
               throw std::logic_error("incorrect argument number");
             }
@@ -1166,29 +1165,29 @@ static void run_interpreter () {
           }
 
           case SecondGroup::CLOSURE: {   // CLOSURE
-            size_t          addr = SAFE_INT;
-            uint32_t          n    = SAFE_INT;
+            size_t          addr = INT;
+            uint32_t          n    = INT;
             {
               push_operand(addr);
               for (int i = 0; i < n; i++) {
-                switch (static_cast<Locs>(SAFE_BYTE)) {
+                switch (static_cast<Locs>(BYTE)) {
                   case Locs::GLOB: {
-                    size_t j  = SAFE_INT;
+                    size_t j  = INT;
                     push_operand(*get_global(j));
                     break;
                   }
                   case Locs::LOC: {
-                    size_t j  = SAFE_INT;
+                    size_t j  = INT;
                     push_operand(*get_local(j));
                     break;
                   }
                   case Locs::ARG: {
-                    size_t j  = SAFE_INT;
+                    size_t j  = INT;
                     push_operand(*get_arg(j));
                     break;
                   }
                   case Locs::CLOS: {
-                    size_t j  = SAFE_INT;
+                    size_t j  = INT;
                     push_operand(*get_closure(j));
                     break;
                   }
@@ -1198,14 +1197,13 @@ static void run_interpreter () {
             };
             stack_reorder(n + 1);
             aint value = reinterpret_cast<aint>(Bclosure(reinterpret_cast<aint *>(operand_stack_end) + 1, make_boxed(n)));
-            for (int i = 0; i < n + 1; ++i) pop_operand();
+            pop_noperands(n + 1);
             push_operand(value);
             break;
           }
 
           case SecondGroup::CALLC: {   // CALLC
-            size_t args_number = SAFE_INT;
-            expected_begin       = true;
+            size_t args_number = INT;
             call_begin(args_number, ip);
             *CLOSURE_ADDRESS = pop_operand();
             if (!Bclosure_tag_patt(reinterpret_cast<void *>(*CLOSURE_ADDRESS))) [[unlikely]] {
@@ -1216,9 +1214,8 @@ static void run_interpreter () {
           }
 
           case SecondGroup::CALL: {   // CALL
-            size_t addr        = SAFE_INT;
-            size_t args_number = SAFE_INT;
-            expected_begin       = true;
+            size_t addr        = INT;
+            size_t args_number = INT;
             call_begin(args_number, ip);
             ip = addr + file->code_ptr;
             break;
@@ -1226,7 +1223,7 @@ static void run_interpreter () {
 
           case SecondGroup::TAG: {   // TAG
             aint string_ptr = reinterpret_cast<aint>(STRING);
-            aint size       = SAFE_INT;
+            aint size       = INT;
             aint data       = pop_operand();
             aint value      = Btag(reinterpret_cast<char *>(data),
                                   LtagHash(reinterpret_cast<char *>(string_ptr)),
@@ -1236,7 +1233,7 @@ static void run_interpreter () {
           }
 
           case SecondGroup::ARRAY: {   // ARRAY
-            aint size  = SAFE_INT;
+            aint size  = INT;
             aint data  = pop_operand();
             aint value = Barray_patt(reinterpret_cast<void *>(data), make_boxed(size));
             push_operand(value);
@@ -1244,8 +1241,8 @@ static void run_interpreter () {
           }
 
           case SecondGroup::FAIL_COMMAND: {   // FAIL
-            aint line   = SAFE_INT;
-            aint column = SAFE_INT;
+            aint line   = INT;
+            aint column = INT;
             aint data   = pop_operand();
             push_operand(data);
             Bmatch_failure(
@@ -1254,7 +1251,7 @@ static void run_interpreter () {
           }
 
           case SecondGroup::LINE: {   // LINE
-            size_t n = SAFE_INT;
+            size_t n = INT;
             break;
           }
 
@@ -1320,11 +1317,11 @@ static void run_interpreter () {
           }
 
           case SpecialCalls::BARRAY: {   // Barray
-            aint n = SAFE_INT;
+            aint n = INT;
             check_has_operands_on_stack(n);
             stack_reorder(n);
             aint value = reinterpret_cast<aint>(Barray(reinterpret_cast<aint *>(operand_stack_end) + 1, make_boxed(n)));
-            for (int i = 0; i < n; ++i) { pop_operand(); }
+            pop_noperands(n);
             push_operand(value);
             break;
           }
@@ -1361,6 +1358,7 @@ int main (int argc, const char *argv[]) {
   try {
     file = read_file(file_name);
     find_main();
+    verify();
   } catch (std::logic_error &e) {
     fprintf(stderr, "Error in bytecode: %s!\n", e.what());
     std::exit(1);
