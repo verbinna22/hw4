@@ -6,6 +6,7 @@
 #include <new>
 #include <stdexcept>
 #include <stdint.h>
+#include <unordered_set>
 #include <vector>
 
 extern "C" {
@@ -59,6 +60,7 @@ typedef struct {
 
 static size_t          bytefile_size;
 static const bytefile *file;
+static size_t code_size;
 static const char     *file_name;
 
 /* Gets a string from a string table by an index */
@@ -114,6 +116,7 @@ static const bytefile *read_file (const char *fname) {
   file->public_ptr = (uint32_t *)file->buffer;
   file->code_ptr   = &file->string_ptr[file->stringtab_size];
   file->global_ptr = nullptr;
+  code_size = raw_size - (file->code_ptr - file->buffer);
 
   if (file->stringtab_size > 0 && file->string_ptr[file->stringtab_size - 1] != 0) {
     throw std::logic_error("stringtab is corrupted");
@@ -527,7 +530,385 @@ static inline const char *safe_get_ip (const char *ip, size_t size) {
   (ip += sizeof(uint32_t), *(const uint32_t *)safe_get_ip(ip - sizeof(uint32_t), sizeof(uint32_t)))
 #define SAFE_BYTE (ip += 1, *safe_get_ip(ip - 1, 1))
 
+#define TRANSFORM_STACK(pop, push, max_use) do { if (current_stack_level < (pop)) throw std::logic_error("may be stack underflow"); max_stack_level_in_func = std::max<uint16_t>(max_stack_level_in_func, current_stack_level + (max_use)); current_stack_level = current_stack_level - (pop) + (push); } while (0)
 
+static void verify () {
+  std::vector<size_t> addresses_to_process = { main_addr };
+  std::unordered_set<size_t> processed_addressed;
+  std::vector<uint16_t> stack_levels_before(code_size, -1);
+  while (!addresses_to_process.empty()) {
+    size_t begin_addr = addresses_to_process.back();
+    addresses_to_process.pop_back();
+    processed_addressed.insert(begin_addr);
+    const char *ip             = begin_addr + file->code_ptr;
+    bool expected_begin = true;
+    bool end_found = false;
+    size_t number_of_front_jumps = 0;
+    uint16_t max_stack_level_in_func = 0;
+    uint16_t current_stack_level = 0;
+    do {
+      // print_code(ip);
+      size_t current_addr = ip - file->code_ptr;
+    char x = SAFE_BYTE, h = uint8_t(x & 0xF0) >> 4, l = x & 0x0F;
+    //dump_heap();
+    // print_stacks();
+    if (expected_begin
+        && (static_cast<HightSymbols>(h) != HightSymbols::SECOND_GROUP
+            || (static_cast<SecondGroup>(l) != SecondGroup::BEGIN
+                   && static_cast<SecondGroup>(l) != SecondGroup::CBEGIN))) {
+      throw std::logic_error("BEGIN or CBEGIN was expected");
+    }
+    if (stack_levels_before[current_addr] != uint16_t(-1)) {
+      if (stack_levels_before[current_addr] != current_stack_level) {
+        throw std::logic_error("invalid stack level merge");
+      }
+      if (number_of_front_jumps == 0) {
+        throw std::logic_error("detected front jump");
+      }
+      number_of_front_jumps -= 1;
+    }
+    stack_levels_before[current_addr] = current_stack_level;
+    switch (static_cast<HightSymbols>(h)) {
+      /* BINOP  must be valid*/
+      case HightSymbols::END: throw std::logic_error("end of bytecode was reached");
+      case HightSymbols::BINOP: {
+        TRANSFORM_STACK(2, 1, 0);
+        switch (static_cast<Binops>(l)) {
+          case Binops::PLUS: break;
+          case Binops::MINUS: break;
+          case Binops::MUL: break;
+          case Binops::DIV:
+            break;
+          case Binops::MOD:
+            break;
+          case Binops::LESS: break;
+          case Binops::LEQ: break;
+          case Binops::GT: break;
+          case Binops::GEQ: break;
+          case Binops::EQ: break;
+          case Binops::NEQ: break;
+          case Binops::AND: break;
+          case Binops::OR: break;
+          default: FAIL;
+        }
+        break;
+      }
+
+      case HightSymbols::FIRST_GROUP:
+        switch (static_cast<FirstGroup>(l)) {
+          case FirstGroup::CONST: {
+            aint n = SAFE_INT;
+            TRANSFORM_STACK(0, 1, 1);
+            break;
+          }
+
+          case FirstGroup::STR: {
+            aint ptr = reinterpret_cast<aint>(STRING);
+            TRANSFORM_STACK(0, 1, 1);
+            break;
+          }
+
+          case FirstGroup::SEXP: {
+            aint          ptr = reinterpret_cast<aint>(STRING);
+            aint          n   = SAFE_INT;
+            TRANSFORM_STACK(n, 1, 1);
+            break;
+          }
+
+          case FirstGroup::STA: {
+            TRANSFORM_STACK(3, 1, 0);
+            break;
+          }
+
+          case FirstGroup::STI: throw std::logic_error("STI is temporary prohibited");
+
+          case FirstGroup::JMP: {
+            size_t addr = SAFE_INT;
+            if (addr < current_addr) {
+              if (addr < begin_addr) {
+                throw std::logic_error("jump outside function");
+              }
+              if (stack_levels_before[addr] != current_stack_level) {
+                throw std::logic_error("invalid stack level merge");
+              }
+            } else {
+              stack_levels_before[addr] = current_stack_level;
+              number_of_front_jumps += 1;
+            }
+            break;
+          }
+
+          case FirstGroup::END:
+            if (current_stack_level != 1) {
+              throw std::logic_error("invalid stack level in END");
+            }
+            end_found = true;
+            break;
+
+          case FirstGroup::RET:
+            if (current_stack_level != 1) {
+              throw std::logic_error("invalid stack level in RET");
+            }
+            break;
+
+          case FirstGroup::DROP:
+            TRANSFORM_STACK(1, 0, 0);
+            break;
+
+          case FirstGroup::DUP: {
+            TRANSFORM_STACK(1, 2, 1);
+            break;
+          }
+
+          case FirstGroup::SWAP: {
+            TRANSFORM_STACK(2, 2, 0);
+            break;
+          }
+
+          case FirstGroup::ELEM: {
+            TRANSFORM_STACK(2, 1, 0);
+            break;
+          }
+
+          default: FAIL;
+        }
+        break;
+
+      case HightSymbols::LD: {
+        size_t i = SAFE_INT;
+        switch (static_cast<Locs>(l)) {
+          case Locs::GLOB: break;
+          case Locs::LOC: break;
+          case Locs::ARG: break;
+          case Locs::CLOS: break;
+          default: throw std::logic_error("invalid loc");
+        }
+        TRANSFORM_STACK(0, 1, 1);
+        break;
+      }
+      case HightSymbols::LDA: throw std::logic_error("LDA is temporary prohibited");
+      case HightSymbols::ST: {
+        size_t i     = SAFE_INT;
+        TRANSFORM_STACK(1, 1, 0);
+        switch (static_cast<Locs>(l)) {
+          case Locs::GLOB: {
+            break;
+          }
+          case Locs::LOC: {
+            break;
+          }
+          case Locs::ARG: {
+            break;
+          }
+          case Locs::CLOS: {
+            break;
+          }
+          default: throw std::logic_error("invalid loc");
+        }
+        break;
+      }
+
+      case HightSymbols::SECOND_GROUP:
+        switch (static_cast<SecondGroup>(l)) {
+          case SecondGroup::CJMPZ: {
+            size_t addr  = SAFE_INT;
+            TRANSFORM_STACK(1, 0, 0);
+            if (addr < current_addr) {
+              if (addr < begin_addr) {
+                throw std::logic_error("jump outside function");
+              }
+              if (stack_levels_before[addr] != current_stack_level) {
+                throw std::logic_error("invalid stack level merge");
+              }
+            } else {
+              stack_levels_before[addr] = current_stack_level;
+              number_of_front_jumps += 1;
+            }
+            break;
+          }
+
+          case SecondGroup::CJMPNZ: {
+            size_t addr  = SAFE_INT;
+            TRANSFORM_STACK(1, 0, 0);
+            if (addr < current_addr) {
+              if (addr < begin_addr) {
+                throw std::logic_error("jump outside function");
+              }
+              if (stack_levels_before[addr] != current_stack_level) {
+                throw std::logic_error("invalid stack level merge");
+              }
+            } else {
+              stack_levels_before[addr] = current_stack_level;
+              number_of_front_jumps += 1;
+            }
+            break;
+          }
+
+          case SecondGroup::BEGIN: {
+            size_t nargs   = SAFE_INT;
+            size_t nlocals = SAFE_INT;
+            if (!expected_begin) [[unlikely]] { throw std::logic_error("BEGIN was not expected"); }
+            expected_begin = false;
+            break;
+          }
+
+          case SecondGroup::CBEGIN: {
+            size_t nargs   = SAFE_INT;
+            size_t nlocals = SAFE_INT;
+            if (!expected_begin) [[unlikely]] { throw std::logic_error("CBEGIN was not expected"); }
+            expected_begin = false;
+            break;
+          }
+
+          case SecondGroup::CLOSURE: {
+            size_t          addr = SAFE_INT;
+            uint32_t          n    = SAFE_INT;
+            if (!processed_addressed.contains(addr)) {
+              addresses_to_process.push_back(addr);
+            }
+            {
+              for (int i = 0; i < n; i++) {
+                size_t loc = SAFE_BYTE;
+                size_t j  = SAFE_INT;
+                switch (static_cast<Locs>(loc)) {
+                  case Locs::GLOB: {
+                    break;
+                  }
+                  case Locs::LOC: {
+                    break;
+                  }
+                  case Locs::ARG: {
+                    break;
+                  }
+                  case Locs::CLOS: {
+                    break;
+                  }
+                  default: throw std::logic_error("invalid loc");
+                }
+              }
+              TRANSFORM_STACK(0, 1, n + 1);
+            };
+            break;
+          }
+
+          case SecondGroup::CALLC: {
+            size_t args_number = SAFE_INT;
+            TRANSFORM_STACK(args_number + 1, 1, 0);
+            break;
+          }
+
+          case SecondGroup::CALL: {
+            size_t addr        = SAFE_INT;
+            size_t args_number = SAFE_INT;
+            if (!processed_addressed.contains(addr)) {
+              addresses_to_process.push_back(addr);
+            }
+            TRANSFORM_STACK(args_number, 1, std::max<size_t>(args_number, 1));
+            break;
+          }
+
+          case SecondGroup::TAG: {
+            aint string_ptr = reinterpret_cast<aint>(STRING);
+            aint size       = SAFE_INT;
+            TRANSFORM_STACK(1, 1, 0);
+            break;
+          }
+
+          case SecondGroup::ARRAY: {
+            aint size  = SAFE_INT;
+            TRANSFORM_STACK(1, 1, 0);
+            break;
+          }
+
+          case SecondGroup::FAIL_COMMAND: {
+            aint line   = SAFE_INT;
+            aint column = SAFE_INT;
+            TRANSFORM_STACK(1, 1, 0);
+            break;
+          }
+
+          case SecondGroup::LINE: {
+            size_t n = SAFE_INT;
+            break;
+          }
+
+          default: FAIL;
+        }
+        break;
+
+      case HightSymbols::PATT: {
+        switch (static_cast<Patterns>(l)) {
+          case Patterns::STRCMP: {
+            TRANSFORM_STACK(2, 1, 0);
+            break;
+          }
+          case Patterns::STR:
+            TRANSFORM_STACK(1, 1, 0);
+            break;
+          case Patterns::ARRAY:
+            TRANSFORM_STACK(1, 1, 0);
+            break;
+          case Patterns::SEXP:
+            TRANSFORM_STACK(1, 1, 0);
+            break;
+          case Patterns::BOXED:
+            TRANSFORM_STACK(1, 1, 0);
+            break;
+          case Patterns::UNBOXED:
+            TRANSFORM_STACK(1, 1, 0);
+            break;
+          case Patterns::CLOSURE:
+            TRANSFORM_STACK(1, 1, 0);
+            break;
+          default: throw std::logic_error("invalid pattern");
+        }
+        break;
+      }
+
+      case HightSymbols::CALL_SPECIAL: {
+        switch (static_cast<SpecialCalls>(l))
+        {
+          case SpecialCalls::LREAD:
+            TRANSFORM_STACK(0, 1, 1);
+            break;
+
+          case SpecialCalls::LWRITE: {
+            TRANSFORM_STACK(1, 1, 0);
+            break;
+          }
+
+          case SpecialCalls::LLENGTH:
+            TRANSFORM_STACK(1, 1, 0);
+            break;
+
+          case SpecialCalls::LSTRING: {
+            TRANSFORM_STACK(1, 1, 0);
+            break;
+          }
+
+          case SpecialCalls::BARRAY: {
+            aint n = SAFE_INT;
+            TRANSFORM_STACK(n, 1, std::max<aint>(1, n));
+            break;
+          }
+          default: FAIL;
+        }
+      } break;
+
+      default: FAIL;
+    }
+    } while(!end_found);
+    if (number_of_front_jumps != 0) {
+      throw std::logic_error("front jump outside the function detected");
+    }
+    auto first_param = const_cast<uint32_t *> (reinterpret_cast<const uint32_t *>(&file->code_ptr[begin_addr + 1]));
+    *first_param = (*first_param & 0x0000FFFF) | (static_cast<uint32_t>(current_stack_level) << sizeof(uint16_t));
+  }
+}
+
+// TODO: locals, globals, args
+// TODO: 1st 2bytes fix
+// TODO: check + extra code remove
 
 static void run_interpreter () {
   bool        expected_begin = true;
