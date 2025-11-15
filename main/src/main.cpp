@@ -555,11 +555,11 @@ static void verify () {
     const char *ip             = begin_addr + file->code_ptr;
     bool expected_begin = true;
     bool end_found = false;
-    size_t number_of_front_jumps = 0;
+    std::unordered_set<size_t> front_jump_addrs;
     uint16_t max_stack_level_in_func = 0;
     uint16_t current_stack_level = 0;
     do {
-      print_code(ip); ////
+      // print_code(ip); ////
       size_t current_addr = ip - file->code_ptr;
     char x = SAFE_BYTE, h = uint8_t(x & 0xF0) >> 4, l = x & 0x0F;
     //dump_heap();
@@ -574,10 +574,7 @@ static void verify () {
       if (stack_levels_before[current_addr] != current_stack_level) {
         throw std::logic_error("invalid stack level merge");
       }
-      if (number_of_front_jumps == 0) {
-        throw std::logic_error("detected front jump");
-      }
-      number_of_front_jumps -= 1;
+      front_jump_addrs.erase(current_addr);
     }
     stack_levels_before[current_addr] = current_stack_level;
     switch (static_cast<HightSymbols>(h)) {
@@ -645,7 +642,14 @@ static void verify () {
               }
             } else {
               stack_levels_before[addr] = current_stack_level;
-              number_of_front_jumps += 1;
+              front_jump_addrs.insert(addr);
+              size_t next_instr_addr = current_addr + 1 + 4;
+              if (next_instr_addr >= stack_levels_before.size()) {
+                throw std::logic_error("must be next instr after JMP");
+              }
+              if (stack_levels_before[next_instr_addr] != uint16_t(-1)) {
+                current_stack_level = stack_levels_before[next_instr_addr];
+              }
             }
             break;
           }
@@ -755,7 +759,7 @@ static void verify () {
               }
             } else {
               stack_levels_before[addr] = current_stack_level;
-              number_of_front_jumps += 1;
+              front_jump_addrs.insert(addr);
             }
             break;
           }
@@ -772,7 +776,7 @@ static void verify () {
               }
             } else {
               stack_levels_before[addr] = current_stack_level;
-              number_of_front_jumps += 1;
+              front_jump_addrs.insert(addr);
             }
             break;
           }
@@ -944,7 +948,7 @@ static void verify () {
       default: FAIL;
     }
     } while(!end_found);
-    if (number_of_front_jumps != 0) {
+    if (!front_jump_addrs.empty()) {
       throw std::logic_error("front jump outside the function detected");
     }
     auto first_param = const_cast<uint32_t *> (reinterpret_cast<const uint32_t *>(&file->code_ptr[begin_addr + 1]));
