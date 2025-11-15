@@ -561,6 +561,7 @@ static void verify () {
     do {
       // print_code(ip); ////
       size_t current_addr = ip - file->code_ptr;
+      //fprintf(stderr, "-->%d -- %d\n", current_stack_level, stack_levels_before[current_addr]);///
     char x = SAFE_BYTE, h = uint8_t(x & 0xF0) >> 4, l = x & 0x0F;
     //dump_heap();
     // print_stacks();
@@ -641,21 +642,27 @@ static void verify () {
                 throw std::logic_error("invalid stack level merge");
               }
             } else {
+              if (stack_levels_before[addr] != uint16_t(-1) &&
+                  stack_levels_before[addr] != current_stack_level) {
+                    throw std::logic_error("invalid stack merge");
+              }
               stack_levels_before[addr] = current_stack_level;
               front_jump_addrs.insert(addr);
-              size_t next_instr_addr = current_addr + 1 + 4;
-              if (next_instr_addr >= stack_levels_before.size()) {
-                throw std::logic_error("must be next instr after JMP");
-              }
-              if (stack_levels_before[next_instr_addr] != uint16_t(-1)) {
-                current_stack_level = stack_levels_before[next_instr_addr];
-              }
+            }
+            size_t next_instr_addr = current_addr + 1 + 4;
+            if (next_instr_addr >= stack_levels_before.size()) {
+              throw std::logic_error("must be next instr after JMP");
+            }
+            // fprintf(stderr, "|||%d\n", stack_levels_before[next_instr_addr]); ///
+            if (stack_levels_before[next_instr_addr] != uint16_t(-1)) {
+              current_stack_level = stack_levels_before[next_instr_addr];
             }
             break;
           }
 
           case FirstGroup::END:
             if (current_stack_level != 1) {
+              //fprintf(stderr, "++%d\n", current_stack_level);///
               throw std::logic_error("invalid stack level in END");
             }
             end_found = true;
@@ -758,6 +765,10 @@ static void verify () {
                 throw std::logic_error("invalid stack level merge");
               }
             } else {
+              if (stack_levels_before[addr] != uint16_t(-1) &&
+                  stack_levels_before[addr] != current_stack_level) {
+                    throw std::logic_error("invalid stack merge");
+              }
               stack_levels_before[addr] = current_stack_level;
               front_jump_addrs.insert(addr);
             }
@@ -775,6 +786,10 @@ static void verify () {
                 throw std::logic_error("invalid stack level merge");
               }
             } else {
+              if (stack_levels_before[addr] != uint16_t(-1) &&
+                  stack_levels_before[addr] != current_stack_level) {
+                    throw std::logic_error("invalid stack merge");
+              }
               stack_levels_before[addr] = current_stack_level;
               front_jump_addrs.insert(addr);
             }
@@ -873,7 +888,7 @@ static void verify () {
           case SecondGroup::FAIL_COMMAND: {
             aint line   = SAFE_INT;
             aint column = SAFE_INT;
-            TRANSFORM_STACK(1, 1, 0);
+            TRANSFORM_STACK(1, 0, 0);
             break;
           }
 
@@ -1249,7 +1264,7 @@ static void run_interpreter () {
             aint line   = INT;
             aint column = INT;
             aint data   = pop_operand();
-            push_operand(data);
+            // push_operand(data);
             Bmatch_failure(
                 reinterpret_cast<void *>(data), const_cast<char *>(file_name), line, column);
             break;
