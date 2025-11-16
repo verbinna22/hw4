@@ -543,6 +543,8 @@ static inline const char *safe_get_ip (const char *ip, size_t size) {
 
 #define TRANSFORM_STACK(pop, push, max_use) do { if (current_stack_level < (pop)) throw std::logic_error("may be stack underflow"); max_stack_level_in_func = std::max<uint16_t>(max_stack_level_in_func, current_stack_level + (max_use)); current_stack_level = current_stack_level - (pop) + (push); } while (0)
 
+constexpr uint16_t NOT_VISITED = uint16_t(-1);
+
 static void verify () {
   std::vector<size_t> addresses_to_process = { main_addr };
   std::unordered_set<size_t> processed_addressed;
@@ -572,7 +574,7 @@ static void verify () {
                    && static_cast<SecondGroup>(l) != SecondGroup::CBEGIN))) {
       throw std::logic_error("BEGIN or CBEGIN was expected");
     }
-    if (stack_levels_before[current_addr] != uint16_t(-1)) {
+    if (stack_levels_before[current_addr] != NOT_VISITED) {
       if (stack_levels_before[current_addr] != current_stack_level) {
         throw std::logic_error("invalid stack level merge");
       }
@@ -646,11 +648,11 @@ static void verify () {
               if (was_fail) {
                 was_fail = false;
                 current_stack_level = stack_levels_before[addr];
-                if (stack_levels_before[addr] == uint16_t(-1)) {
+                if (stack_levels_before[addr] == NOT_VISITED) {
                   throw std::logic_error("must be not fail jump");
                 }
               } else {
-                if (stack_levels_before[addr] != uint16_t(-1) &&
+                if (stack_levels_before[addr] != NOT_VISITED &&
                     stack_levels_before[addr] != current_stack_level) {
                       throw std::logic_error("invalid stack merge 1");
                 }
@@ -663,7 +665,7 @@ static void verify () {
               throw std::logic_error("must be next instr after JMP");
             }
             // fprintf(stderr, "|||%d\n", stack_levels_before[next_instr_addr]); ///
-            if (stack_levels_before[next_instr_addr] != uint16_t(-1)) {
+            if (stack_levels_before[next_instr_addr] != NOT_VISITED) {
               current_stack_level = stack_levels_before[next_instr_addr];
             }
             break;
@@ -774,7 +776,7 @@ static void verify () {
                 throw std::logic_error("invalid stack level merge");
               }
             } else {
-              if (stack_levels_before[addr] != uint16_t(-1) &&
+              if (stack_levels_before[addr] != NOT_VISITED &&
                   stack_levels_before[addr] != current_stack_level) {
                     throw std::logic_error("invalid stack merge 2");
               }
@@ -795,7 +797,7 @@ static void verify () {
                 throw std::logic_error("invalid stack level merge");
               }
             } else {
-              if (stack_levels_before[addr] != uint16_t(-1) &&
+              if (stack_levels_before[addr] != NOT_VISITED &&
                   stack_levels_before[addr] != current_stack_level) {
                     throw std::logic_error("invalid stack merge 3");
               }
