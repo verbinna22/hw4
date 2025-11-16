@@ -545,6 +545,16 @@ static inline const char *safe_get_ip (const char *ip, size_t size) {
 
 constexpr uint16_t NOT_VISITED = uint16_t(-1);
 
+static inline void check_merge (std::vector<uint16_t> &stack_levels_before, uint16_t current_stack_level,
+                size_t addr) {
+  if (addr >= stack_levels_before.size()) { throw std::logic_error("bad address"); }
+  if (stack_levels_before[addr] != NOT_VISITED
+      && stack_levels_before[addr] != current_stack_level) {
+    throw std::logic_error("invalid stack merge");
+  }
+  stack_levels_before[addr] = current_stack_level;
+}
+
 static void verify () {
   std::vector<size_t> addresses_to_process = { main_addr };
   std::vector<uint16_t> stack_levels_before(code_size, NOT_VISITED);
@@ -633,21 +643,17 @@ static void verify () {
 
           case FirstGroup::JMP: {
             size_t addr = SAFE_INT;
-            if (addr > stack_levels_before.size()) {
-              throw std::logic_error("invalid jump");
-            }
             if (was_fail) {
               was_fail = false;
+              if (addr >= stack_levels_before.size()) {
+                throw std::logic_error("invalid jump");
+              }
               current_stack_level = stack_levels_before[addr];
               if (stack_levels_before[addr] == NOT_VISITED) {
                 throw std::logic_error("must be not fail jump");
               }
             } else {
-              if (stack_levels_before[addr] != NOT_VISITED &&
-                  stack_levels_before[addr] != current_stack_level) {
-                    throw std::logic_error("invalid stack merge 1");
-              }
-              stack_levels_before[addr] = current_stack_level;
+              check_merge(stack_levels_before, current_stack_level, addr);
             }
             size_t next_instr_addr = current_addr + 1 + 4;
             if (next_instr_addr >= stack_levels_before.size()) {
@@ -758,14 +764,7 @@ static void verify () {
           case SecondGroup::CJMPZ: {
             size_t addr  = SAFE_INT;
             TRANSFORM_STACK(1, 0, 0);
-            if (addr >= stack_levels_before.size()) {
-              throw std::logic_error("bad address");
-            }
-            if (stack_levels_before[addr] != NOT_VISITED &&
-                stack_levels_before[addr] != current_stack_level) {
-                  throw std::logic_error("invalid stack merge");
-            }
-            stack_levels_before[addr] = current_stack_level;
+            check_merge(stack_levels_before, current_stack_level, addr);
             break;
           }
 
