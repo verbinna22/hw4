@@ -1388,7 +1388,7 @@ int main (int argc, const char *argv[]) {
   try {
     file = read_file(file_name);
     find_main();
-    // verify();
+    verify();
   } catch (std::logic_error &e) {
     fprintf(stderr, "Error in bytecode: %s!\n", e.what());
     std::exit(1);
