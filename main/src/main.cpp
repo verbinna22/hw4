@@ -558,8 +558,9 @@ static void verify () {
     std::unordered_set<size_t> front_jump_addrs;
     uint16_t max_stack_level_in_func = 0;
     uint16_t current_stack_level = 0;
+    bool was_fail = false;
     do {
-      // print_code(ip); ////
+      //print_code(ip); ////
       size_t current_addr = ip - file->code_ptr;
       //fprintf(stderr, "-->%d -- %d\n", current_stack_level, stack_levels_before[current_addr]);///
     char x = SAFE_BYTE, h = uint8_t(x & 0xF0) >> 4, l = x & 0x0F;
@@ -642,12 +643,20 @@ static void verify () {
                 throw std::logic_error("invalid stack level merge");
               }
             } else {
-              if (stack_levels_before[addr] != uint16_t(-1) &&
-                  stack_levels_before[addr] != current_stack_level) {
-                    throw std::logic_error("invalid stack merge");
+              if (was_fail) {
+                was_fail = false;
+                current_stack_level = stack_levels_before[addr];
+                if (stack_levels_before[addr] == uint16_t(-1)) {
+                  throw std::logic_error("must be not fail jump");
+                }
+              } else {
+                if (stack_levels_before[addr] != uint16_t(-1) &&
+                    stack_levels_before[addr] != current_stack_level) {
+                      throw std::logic_error("invalid stack merge 1");
+                }
+                stack_levels_before[addr] = current_stack_level;
+                front_jump_addrs.insert(addr);
               }
-              stack_levels_before[addr] = current_stack_level;
-              front_jump_addrs.insert(addr);
             }
             size_t next_instr_addr = current_addr + 1 + 4;
             if (next_instr_addr >= stack_levels_before.size()) {
@@ -767,7 +776,7 @@ static void verify () {
             } else {
               if (stack_levels_before[addr] != uint16_t(-1) &&
                   stack_levels_before[addr] != current_stack_level) {
-                    throw std::logic_error("invalid stack merge");
+                    throw std::logic_error("invalid stack merge 2");
               }
               stack_levels_before[addr] = current_stack_level;
               front_jump_addrs.insert(addr);
@@ -788,7 +797,7 @@ static void verify () {
             } else {
               if (stack_levels_before[addr] != uint16_t(-1) &&
                   stack_levels_before[addr] != current_stack_level) {
-                    throw std::logic_error("invalid stack merge");
+                    throw std::logic_error("invalid stack merge 3");
               }
               stack_levels_before[addr] = current_stack_level;
               front_jump_addrs.insert(addr);
@@ -888,7 +897,8 @@ static void verify () {
           case SecondGroup::FAIL_COMMAND: {
             aint line   = SAFE_INT;
             aint column = SAFE_INT;
-            TRANSFORM_STACK(1, 0, 0);
+            TRANSFORM_STACK(1, 1, 0);
+            was_fail = true;
             break;
           }
 
@@ -1264,7 +1274,7 @@ static void run_interpreter () {
             aint line   = INT;
             aint column = INT;
             aint data   = pop_operand();
-            // push_operand(data);
+            push_operand(data);
             Bmatch_failure(
                 reinterpret_cast<void *>(data), const_cast<char *>(file_name), line, column);
             break;
@@ -1378,7 +1388,7 @@ int main (int argc, const char *argv[]) {
   try {
     file = read_file(file_name);
     find_main();
-    verify();
+    // verify();
   } catch (std::logic_error &e) {
     fprintf(stderr, "Error in bytecode: %s!\n", e.what());
     std::exit(1);

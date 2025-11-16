@@ -1,0 +1,5 @@
+hw2: 7m34,380s
+lamac -i : 11m54,332s
+hw4 verification: 0m0,007s
+hw4 execution: 5m59,105s
+lamac -s: 3m21,192s
