@@ -547,17 +547,14 @@ constexpr uint16_t NOT_VISITED = uint16_t(-1);
 
 static void verify () {
   std::vector<size_t> addresses_to_process = { main_addr };
-  std::unordered_set<size_t> processed_addressed;
-  std::vector<uint16_t> stack_levels_before(code_size, -1);
+  std::vector<uint16_t> stack_levels_before(code_size, NOT_VISITED);
   nglobals = file->global_area_size;
   while (!addresses_to_process.empty()) {
     size_t begin_addr = addresses_to_process.back();
     addresses_to_process.pop_back();
-    processed_addressed.insert(begin_addr);
     const char *ip             = begin_addr + file->code_ptr;
     bool expected_begin = true;
     bool end_found = false;
-    std::unordered_set<size_t> front_jump_addrs;
     uint16_t max_stack_level_in_func = 0;
     uint16_t current_stack_level = 0;
     bool was_fail = false;
@@ -578,7 +575,6 @@ static void verify () {
       if (stack_levels_before[current_addr] != current_stack_level) {
         throw std::logic_error("invalid stack level merge");
       }
-      front_jump_addrs.erase(current_addr);
     }
     stack_levels_before[current_addr] = current_stack_level;
     switch (static_cast<HightSymbols>(h)) {
@@ -637,28 +633,21 @@ static void verify () {
 
           case FirstGroup::JMP: {
             size_t addr = SAFE_INT;
-            if (addr < current_addr) {
-              if (addr < begin_addr) {
-                throw std::logic_error("jump outside function");
-              }
-              if (stack_levels_before[addr] != current_stack_level) {
-                throw std::logic_error("invalid stack level merge");
+            if (addr > stack_levels_before.size()) {
+              throw std::logic_error("invalid jump");
+            }
+            if (was_fail) {
+              was_fail = false;
+              current_stack_level = stack_levels_before[addr];
+              if (stack_levels_before[addr] == NOT_VISITED) {
+                throw std::logic_error("must be not fail jump");
               }
             } else {
-              if (was_fail) {
-                was_fail = false;
-                current_stack_level = stack_levels_before[addr];
-                if (stack_levels_before[addr] == NOT_VISITED) {
-                  throw std::logic_error("must be not fail jump");
-                }
-              } else {
-                if (stack_levels_before[addr] != NOT_VISITED &&
-                    stack_levels_before[addr] != current_stack_level) {
-                      throw std::logic_error("invalid stack merge 1");
-                }
-                stack_levels_before[addr] = current_stack_level;
-                front_jump_addrs.insert(addr);
+              if (stack_levels_before[addr] != NOT_VISITED &&
+                  stack_levels_before[addr] != current_stack_level) {
+                    throw std::logic_error("invalid stack merge 1");
               }
+              stack_levels_before[addr] = current_stack_level;
             }
             size_t next_instr_addr = current_addr + 1 + 4;
             if (next_instr_addr >= stack_levels_before.size()) {
@@ -765,45 +754,18 @@ static void verify () {
 
       case HightSymbols::SECOND_GROUP:
         switch (static_cast<SecondGroup>(l)) {
+          case SecondGroup::CJMPNZ:
           case SecondGroup::CJMPZ: {
             size_t addr  = SAFE_INT;
             TRANSFORM_STACK(1, 0, 0);
-            if (addr < current_addr) {
-              if (addr < begin_addr) {
-                throw std::logic_error("jump outside function");
-              }
-              if (stack_levels_before[addr] != current_stack_level) {
-                throw std::logic_error("invalid stack level merge");
-              }
-            } else {
-              if (stack_levels_before[addr] != NOT_VISITED &&
-                  stack_levels_before[addr] != current_stack_level) {
-                    throw std::logic_error("invalid stack merge 2");
-              }
-              stack_levels_before[addr] = current_stack_level;
-              front_jump_addrs.insert(addr);
+            if (addr >= stack_levels_before.size()) {
+              throw std::logic_error("bad address");
             }
-            break;
-          }
-
-          case SecondGroup::CJMPNZ: {
-            size_t addr  = SAFE_INT;
-            TRANSFORM_STACK(1, 0, 0);
-            if (addr < current_addr) {
-              if (addr < begin_addr) {
-                throw std::logic_error("jump outside function");
-              }
-              if (stack_levels_before[addr] != current_stack_level) {
-                throw std::logic_error("invalid stack level merge");
-              }
-            } else {
-              if (stack_levels_before[addr] != NOT_VISITED &&
-                  stack_levels_before[addr] != current_stack_level) {
-                    throw std::logic_error("invalid stack merge 3");
-              }
-              stack_levels_before[addr] = current_stack_level;
-              front_jump_addrs.insert(addr);
+            if (stack_levels_before[addr] != NOT_VISITED &&
+                stack_levels_before[addr] != current_stack_level) {
+                  throw std::logic_error("invalid stack merge");
             }
+            stack_levels_before[addr] = current_stack_level;
             break;
           }
 
@@ -830,7 +792,10 @@ static void verify () {
           case SecondGroup::CLOSURE: {
             size_t          addr = SAFE_INT;
             uint32_t          n    = SAFE_INT;
-            if (!processed_addressed.contains(addr)) {
+            if (addr >= stack_levels_before.size()) {
+              throw std::logic_error("invalid address");
+            }
+            if (stack_levels_before[addr] == NOT_VISITED) {
               addresses_to_process.push_back(addr);
             }
             {
@@ -876,7 +841,10 @@ static void verify () {
           case SecondGroup::CALL: {
             size_t addr        = SAFE_INT;
             size_t args_number = SAFE_INT;
-            if (!processed_addressed.contains(addr)) {
+            if (addr >= stack_levels_before.size()) {
+              throw std::logic_error("invalid address");
+            }
+            if (stack_levels_before[addr] == NOT_VISITED) {
               addresses_to_process.push_back(addr);
             }
             TRANSFORM_STACK(args_number, 1, std::max<size_t>(args_number, 1));
@@ -975,9 +943,6 @@ static void verify () {
       default: FAIL;
     }
     } while(!end_found);
-    if (!front_jump_addrs.empty()) {
-      throw std::logic_error("front jump outside the function detected");
-    }
     auto first_param = const_cast<uint32_t *> (reinterpret_cast<const uint32_t *>(&file->code_ptr[begin_addr + 1]));
     *first_param = (*first_param & 0x0000FFFF) | (static_cast<uint32_t>(current_stack_level) << (sizeof(uint16_t) * CHAR_BIT));
   }
